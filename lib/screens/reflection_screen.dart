@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:muse/models/journal_model.dart';
+import 'package:muse/services/database_service.dart';
+import 'package:uuid/uuid.dart'; // For generating unique IDs
 
 class ReflectionScreen extends StatelessWidget {
   final String originalText;
@@ -53,9 +56,19 @@ class ReflectionScreen extends StatelessWidget {
                   context,
                   icon: Icons.save,
                   label: 'Save',
-                  onPressed: () {
-                    // TODO: Implement saving logic
-                    print('Save button pressed');
+                  onPressed: () async {
+                    // Save logic
+                    final databaseService = DatabaseService();
+                    final newEntry = JournalEntry(
+                      id: const Uuid().v4(), // Generate a unique ID
+                      date: DateTime.now(),
+                      originalSpeech: originalText,
+                      aiReflection: aiRewrittenText,
+                    );
+                    await databaseService.addJournalEntry(newEntry);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Reflection saved!')),
+                    );
                   },
                 ),
                 _buildActionButton(
@@ -101,7 +114,7 @@ class ReflectionScreen extends StatelessWidget {
         padding: const EdgeInsets.all(20.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [+
+          children: [
             Text(
               title,
               style: TextStyle(
