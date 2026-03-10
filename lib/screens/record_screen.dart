@@ -6,6 +6,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
+import 'package:muse/services/gemini_service.dart'; // Import your GeminiService
+import 'package:muse/screens/reflection_screen.dart'; // Import your ReflectionScreen
 
 class RecordScreen extends StatefulWidget {
   const RecordScreen({super.key});
@@ -25,6 +27,9 @@ class _RecordScreenState extends State<RecordScreen> {
   bool _speechEnabled = false;
   String _lastWords = '';
   String _currentLocaleId = '';
+
+  // For AI processing indicator
+  bool _isProcessingAI = false;
 
   @override
   void initState() {
@@ -48,17 +53,23 @@ class _RecordScreenState extends State<RecordScreen> {
   /// Each time to start a speech recognition session
   void _startListening() async {
     if (_speechEnabled) {
-      await _speechToText.listen(
-        onResult: _onSpeechResult,
-        listenFor: const Duration(seconds: 30), // Listen for up to 30 seconds
-        localeId: _currentLocaleId,
-        cancelOnError: true,
-        partialResults: true,
-        onSoundLevelChange: (level) => print('Sound level: $level'),
-      );
-      setState(() {
-        _isRecordingAudio = true; // Use this to indicate listening for STT
-      });
+      // Request microphone permission specifically for speech to text
+      if (await Permission.microphone.request().isGranted) {
+        await _speechToText.listen(
+          onResult: _onSpeechResult,
+          listenFor: const Duration(seconds: 30), // Listen for up to 30 seconds
+          localeId: _currentLocaleId,
+          cancelOnError: true,
+          partialResults: true,
+          onSoundLevelChange: (level) => print('Sound level: $level'),
+        );
+        setState(() {
+          _isRecordingAudio = false; // Reset audio recording state if starting STT
+          _lastWords = ''; // Clear previous transcription
+        });
+      } else {
+        _showPermissionDeniedDialog();
+      }
     }
   }
 
@@ -66,8 +77,31 @@ class _RecordScreenState extends State<RecordScreen> {
   void _stopListening() async {
     await _speechToText.stop();
     setState(() {
-      _isRecordingAudio = false;
+      // No longer listening for speech
     });
+
+    if (_lastWords.isNotEmpty) {
+      setState(() {
+        _isProcessingAI = true;
+      });
+      final geminiService = GeminiService();
+      final aiReflection = await geminiService.getGeminiAIText(userTranscript: _lastWords);
+
+      setState(() {
+        _isProcessingAI = false;
+      });
+
+      // Navigate to ReflectionScreen and pass the original text and AI reflection
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ReflectionScreen(
+            originalText: _lastWords,
+            aiRewrittenText: aiReflection,
+          ),
+        ),
+      );
+    }
   }
 
   /// This is the callback that the SpeechToText plugin calls when
@@ -79,6 +113,8 @@ class _RecordScreenState extends State<RecordScreen> {
   }
 
   // For audio recording - keeping original functionality as well
+  // Note: This method is currently not triggered by the UI. If you want to use
+  // it, you'll need to add a separate button or modify the existing one's logic.
   Future<void> _startAudioRecording() async {
     try {
       if (await Permission.microphone.request().isGranted) {
@@ -167,14 +203,14 @@ class _RecordScreenState extends State<RecordScreen> {
                 alignment: Alignment.center,
                 children: [
                   // Listening indicator for speech-to-text or recording animation
-                  if (_speechToText.isListening || _isRecordingAudio)
+                  if (_speechToText.isListening || _isProcessingAI)
                     Container(
                       width: 150,
                       height: 150,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: (_speechToText.isListening)
-                            ? Colors.green.withOpacity(0.3) // Green for STT listening
+                        color: (_speechToText.isListening || _isProcessingAI)
+                            ? Colors.green.withOpacity(0.3) // Green for STT listening or AI processing
                             : Colors.red.withOpacity(0.3), // Red for audio recording
                       ),
                     ),
@@ -186,16 +222,14 @@ class _RecordScreenState extends State<RecordScreen> {
                       } else {
                         _startListening();
                       }
-                      // You can also add logic here to start/stop audio recording
-                      // if you want both functionalities simultaneously or separately.
                     },
                     child: Container(
                       width: 100,
                       height: 100,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: _speechToText.isListening
-                            ? Colors.green.shade300 // Green when listening
+                        color: _speechToText.isListening || _isProcessingAI
+                            ? Colors.green.shade300 // Green when listening or processing
                             : Colors.pink.shade300, // Pink when idle
                         boxShadow: [
                           BoxShadow(
@@ -217,11 +251,13 @@ class _RecordScreenState extends State<RecordScreen> {
               ),
               const SizedBox(height: 30),
               Text(
-                _speechToText.isListening
-                    ? 'Listening...'
-                    : _speechEnabled
-                        ? 'Tap microphone to speak'
-                        : 'Speech not available',
+                _isProcessingAI
+                    ? 'Generating reflection...'
+                    : _speechToText.isListening
+                        ? 'Listening...'
+                        : _speechEnabled
+                            ? 'Tap microphone to speak'
+                            : 'Speech not available',
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -229,15 +265,16 @@ class _RecordScreenState extends State<RecordScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              Text(
-                _lastWords,
-                style: TextStyle(
-                  fontSize: 18,
-                  color: Colors.grey.shade600,
+              if (!_isProcessingAI && _lastWords.isNotEmpty)
+                Text(
+                  _lastWords,
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.grey.shade600,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
-                textAlign: TextAlign.center,
-              ),
-              if (_audioPath != null && !_isRecordingAudio) ...[
+              if (_audioPath != null && !_isRecordingAudio && !_isProcessingAI) ...[
                 const SizedBox(height: 20),
                 Text(
                   'Recorded file: ${_audioPath!.split('/').last}',
